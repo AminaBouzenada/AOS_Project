@@ -20,4 +20,7 @@
         --- PASS: TestStress (31.49s)
         PASS
         ok      database-sync-unsynchronized    35.176s
+
+   3- Run benchmarks:
+       go test -bench=. -benchmem
         
