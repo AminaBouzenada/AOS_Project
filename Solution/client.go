@@ -48,7 +48,7 @@ func (c *Client) Run(wg *sync.WaitGroup) {
 
 // executeTransaction performs a single transaction with multiple operations
 func (c *Client) executeTransaction(txNum int) {
-	tx := c.db.BeginTransaction()
+	tx := c.db.BeginTransaction(0)
 
 	// Perform random operations
 	for i := 0; i < c.config.OperationsPerTx; i++ {
@@ -56,7 +56,7 @@ func (c *Client) executeTransaction(txNum int) {
 	}
 
 	// Commit the transaction
-	c.db.Commit(tx)
+	c.db.Commit(tx, 0)
 }
 
 // performRandomOperation executes a random database operation
@@ -93,10 +93,10 @@ func RunBankTransferScenario(db *Database, numClients int, transfersPerClient in
 	fmt.Printf("Running %d clients, each performing %d transfers\n", numClients, transfersPerClient)
 
 	// Initialize two accounts with 1000 each
-	initTx := db.BeginTransaction()
+	initTx := db.BeginTransaction(2)
 	db.Write(initTx, "account_A", 1000)
 	db.Write(initTx, "account_B", 1000)
-	db.Commit(initTx)
+	db.Commit(initTx, 2)
 
 	initialTotal := 2000
 	fmt.Printf("Initial state: account_A=1000, account_B=1000, total=%d\n", initialTotal)
@@ -116,7 +116,7 @@ func RunBankTransferScenario(db *Database, numClients int, transfersPerClient in
 				amount := rng.Intn(50) + 1 // Transfer 1-50
 
 				// Transfer from A to B
-				tx := db.BeginTransaction()
+				tx := db.BeginTransaction(2)
 
 				// Read from account A
 				balanceA, _ := db.Read(tx, "account_A")
@@ -131,7 +131,7 @@ func RunBankTransferScenario(db *Database, numClients int, transfersPerClient in
 				db.Write(tx, "account_A", balanceA-amount)
 				db.Write(tx, "account_B", balanceB+amount)
 
-				db.Commit(tx)
+				db.Commit(tx, 2)
 			}
 		}()
 	}
@@ -139,8 +139,8 @@ func RunBankTransferScenario(db *Database, numClients int, transfersPerClient in
 	wg.Wait()
 
 	// Verify total is still 2000 (it won't be due to race conditions!)
-	finalA, _ := db.Read(db.BeginTransaction(), "account_A")
-	finalB, _ := db.Read(db.BeginTransaction(), "account_B")
+	finalA, _ := db.Read(db.BeginTransaction(2), "account_A")
+	finalB, _ := db.Read(db.BeginTransaction(2), "account_B")
 	finalTotal := finalA + finalB
 
 	fmt.Printf("\nFinal state: account_A=%d, account_B=%d, total=%d\n", finalA, finalB, finalTotal)
@@ -160,9 +160,9 @@ func RunCounterScenario(db *Database, numClients int, incrementsPerClient int) {
 	fmt.Printf("Running %d clients, each incrementing %d times\n", numClients, incrementsPerClient)
 
 	// Initialize counter to 0
-	initTx := db.BeginTransaction()
+	initTx := db.BeginTransaction(1)
 	db.Write(initTx, "counter", 0)
-	db.Commit(initTx)
+	db.Commit(initTx, 1)
 
 	expectedFinal := numClients * incrementsPerClient
 	fmt.Printf("Expected final value: %d\n", expectedFinal)
@@ -177,9 +177,9 @@ func RunCounterScenario(db *Database, numClients int, incrementsPerClient int) {
 			defer wg.Done()
 
 			for j := 0; j < incrementsPerClient; j++ {
-				tx := db.BeginTransaction()
+				tx := db.BeginTransaction(1)
 				db.Update(tx, "counter", 1) // Increment by 1
-				db.Commit(tx)
+				db.Commit(tx, 1)
 			}
 		}()
 	}
@@ -187,7 +187,7 @@ func RunCounterScenario(db *Database, numClients int, incrementsPerClient int) {
 	wg.Wait()
 
 	// Check final value
-	finalValue, _ := db.Read(db.BeginTransaction(), "counter")
+	finalValue, _ := db.Read(db.BeginTransaction(1), "counter")
 
 	fmt.Printf("Final counter value: %d\n", finalValue)
 
@@ -206,10 +206,10 @@ func RunReadWriteScenario(db *Database, numReaders int, numWriters int, duration
 	fmt.Printf("Running %d readers and %d writers for %v\n", numReaders, numWriters, duration)
 
 	// Initialize some data
-	initTx := db.BeginTransaction()
+	initTx := db.BeginTransaction(3)
 	db.Write(initTx, "data_1", 100)
 	db.Write(initTx, "data_2", 100)
-	db.Commit(initTx)
+	db.Commit(initTx, 3)
 
 	stopChan := make(chan bool)
 	var wg sync.WaitGroup
@@ -229,7 +229,7 @@ func RunReadWriteScenario(db *Database, numReaders int, numWriters int, duration
 				case <-stopChan:
 					return
 				default:
-					tx := db.BeginTransaction()
+					tx := db.BeginTransaction(3)
 					val1, _ := db.Read(tx, "data_1")
 					val2, _ := db.Read(tx, "data_2")
 
@@ -240,7 +240,7 @@ func RunReadWriteScenario(db *Database, numReaders int, numWriters int, duration
 						inconsistentMutex.Unlock()
 					}
 
-					db.Commit(tx)
+					db.Commit(tx, 3)
 					time.Sleep(time.Microsecond * 100)
 				}
 			}
@@ -260,7 +260,7 @@ func RunReadWriteScenario(db *Database, numReaders int, numWriters int, duration
 				case <-stopChan:
 					return
 				default:
-					tx := db.BeginTransaction()
+					tx := db.BeginTransaction(3)
 					newValue := rng.Intn(1000)
 
 					// Write same value to both (should be atomic, but isn't!)
@@ -268,7 +268,7 @@ func RunReadWriteScenario(db *Database, numReaders int, numWriters int, duration
 					time.Sleep(time.Microsecond * 50) // Increase chance of inconsistent read
 					db.Write(tx, "data_2", newValue)
 
-					db.Commit(tx)
+					db.Commit(tx, 3)
 					time.Sleep(time.Microsecond * 100)
 				}
 			}

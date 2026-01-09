@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -9,14 +10,14 @@ import (
 type Record struct {
 	Key       string
 	Value     int
-	Version   int       // Used to detect lost updates
+	Version   int // Used to detect lost updates
 	UpdatedAt time.Time
 }
 
 // Transaction represents a database transaction
 type Transaction struct {
-	ID        int
-	StartTime time.Time
+	ID         int
+	StartTime  time.Time
 	Operations []string // Log of operations for debugging
 }
 
@@ -24,35 +25,53 @@ type Transaction struct {
 // WARNING: This implementation has NO synchronization!
 // Multiple goroutines accessing this will cause race conditions.
 type Database struct {
-	records map[string]*Record
+	records   map[string]*Record
 	txCounter int
-	stats   Stats
+	stats     Stats
+	mu        sync.Mutex
+	mu1       sync.Mutex
+	mu2       sync.Mutex
+	mu3       sync.Mutex
 }
 
 // Stats tracks database statistics to detect corruption
 type Stats struct {
-	TotalReads    int
-	TotalWrites   int
-	TotalUpdates  int
-	LostUpdates   int // Detected when version doesn't increment properly
+	TotalReads     int
+	TotalWrites    int
+	TotalUpdates   int
+	LostUpdates    int // Detected when version doesn't increment properly
 	DataCorruption int // Detected when data is inconsistent
 }
 
 // NewDatabase creates a new database instance
 func NewDatabase() *Database {
 	return &Database{
-		records: make(map[string]*Record),
+		records:   make(map[string]*Record),
 		txCounter: 0,
 	}
 }
 
 // BeginTransaction starts a new transaction
 // RACE CONDITION: txCounter is not protected!
-func (db *Database) BeginTransaction() *Transaction {
+func (db *Database) BeginTransaction(s int) *Transaction {
+	if s == 1 {
+		db.mu1.Lock()
+	} else {
+		if s == 2 {
+			db.mu2.Lock()
+		} else {
+			if s == 3 {
+				db.mu3.Lock()
+			} else {
+				db.mu.Lock()
+			}
+
+		}
+	}
 	db.txCounter++ // UNSAFE: Multiple goroutines can increment simultaneously
 	tx := &Transaction{
-		ID:        db.txCounter,
-		StartTime: time.Now(),
+		ID:         db.txCounter,
+		StartTime:  time.Now(),
 		Operations: make([]string, 0),
 	}
 	return tx
@@ -62,16 +81,16 @@ func (db *Database) BeginTransaction() *Transaction {
 // RACE CONDITION: Reading while another goroutine is writing
 func (db *Database) Read(tx *Transaction, key string) (int, bool) {
 	db.stats.TotalReads++ // UNSAFE: Not atomic
-	
+
 	record, exists := db.records[key]
 	if !exists {
 		tx.Operations = append(tx.Operations, fmt.Sprintf("READ %s: NOT_FOUND", key))
 		return 0, false
 	}
-	
+
 	// Simulate some processing time to increase likelihood of race conditions
 	time.Sleep(time.Microsecond * 10)
-	
+
 	value := record.Value // UNSAFE: Value might change between check and read
 	tx.Operations = append(tx.Operations, fmt.Sprintf("READ %s: %d", key, value))
 	return value, true
@@ -81,12 +100,12 @@ func (db *Database) Read(tx *Transaction, key string) (int, bool) {
 // RACE CONDITION: Multiple writes to the same key can cause lost updates
 func (db *Database) Write(tx *Transaction, key string, value int) {
 	db.stats.TotalWrites++ // UNSAFE: Not atomic
-	
+
 	existingRecord, exists := db.records[key]
-	
+
 	// Simulate some processing time
 	time.Sleep(time.Microsecond * 10)
-	
+
 	if exists {
 		// UNSAFE: Another goroutine might update version between read and write
 		oldVersion := existingRecord.Version
@@ -110,24 +129,24 @@ func (db *Database) Write(tx *Transaction, key string, value int) {
 // RACE CONDITION: Classic lost update problem!
 func (db *Database) Update(tx *Transaction, key string, delta int) bool {
 	db.stats.TotalUpdates++ // UNSAFE: Not atomic
-	
+
 	// Read current value
 	currentValue, exists := db.records[key]
 	if !exists {
 		tx.Operations = append(tx.Operations, fmt.Sprintf("UPDATE %s: NOT_FOUND", key))
 		return false
 	}
-	
+
 	// Simulate some processing time (makes race condition more likely)
 	time.Sleep(time.Microsecond * 50)
-	
+
 	// UNSAFE: Another goroutine might have modified the value!
 	oldVersion := currentValue.Version
 	newValue := currentValue.Value + delta
 	currentValue.Value = newValue
 	currentValue.Version = oldVersion + 1
 	currentValue.UpdatedAt = time.Now()
-	
+
 	tx.Operations = append(tx.Operations, fmt.Sprintf("UPDATE %s: +%d = %d (v%d)", key, delta, newValue, currentValue.Version))
 	return true
 }
@@ -140,10 +159,10 @@ func (db *Database) Delete(tx *Transaction, key string) bool {
 		tx.Operations = append(tx.Operations, fmt.Sprintf("DELETE %s: NOT_FOUND", key))
 		return false
 	}
-	
+
 	// Simulate some processing time
 	time.Sleep(time.Microsecond * 10)
-	
+
 	// UNSAFE: Another goroutine might delete or modify this key
 	delete(db.records, key)
 	tx.Operations = append(tx.Operations, fmt.Sprintf("DELETE %s: SUCCESS", key))
@@ -151,7 +170,20 @@ func (db *Database) Delete(tx *Transaction, key string) bool {
 }
 
 // Commit finalizes a transaction
-func (db *Database) Commit(tx *Transaction) {
+func (db *Database) Commit(tx *Transaction, s int) {
+	if s == 1 {
+		db.mu1.Unlock()
+	} else {
+		if s == 2 {
+			db.mu2.Unlock()
+		} else {
+			if s == 3 {
+				db.mu3.Unlock()
+			} else {
+				db.mu.Unlock()
+			}
+		}
+	}
 	duration := time.Since(tx.StartTime)
 	tx.Operations = append(tx.Operations, fmt.Sprintf("COMMIT (duration: %v)", duration))
 }
@@ -172,20 +204,20 @@ func (db *Database) GetStats() Stats {
 // This helps demonstrate that race conditions occurred
 func (db *Database) VerifyIntegrity(expectedValues map[string]int) (bool, []string) {
 	errors := make([]string, 0)
-	
+
 	for key, expectedValue := range expectedValues {
 		record, exists := db.records[key]
 		if !exists {
 			errors = append(errors, fmt.Sprintf("Key %s missing (expected %d)", key, expectedValue))
 			continue
 		}
-		
+
 		if record.Value != expectedValue {
 			errors = append(errors, fmt.Sprintf("Key %s has value %d (expected %d)", key, record.Value, expectedValue))
 			db.stats.DataCorruption++
 		}
 	}
-	
+
 	return len(errors) == 0, errors
 }
 
@@ -212,7 +244,7 @@ func (db *Database) GetRecordCount() int {
 func (db *Database) PrintRecords() {
 	fmt.Println("\n=== Database Records ===")
 	for key, record := range db.records { // UNSAFE: Concurrent map iteration
-		fmt.Printf("%s: value=%d, version=%d, updated=%v\n", 
+		fmt.Printf("%s: value=%d, version=%d, updated=%v\n",
 			key, record.Value, record.Version, record.UpdatedAt.Format("15:04:05.000"))
 	}
 	fmt.Println("========================")

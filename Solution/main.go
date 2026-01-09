@@ -54,13 +54,13 @@ func runGeneralScenario(db *Database) {
 	fmt.Printf("Running 8 clients with mixed operations\n")
 
 	// Initialize some data
-	initTx := db.BeginTransaction()
+	initTx := db.BeginTransaction(0)
 	db.Write(initTx, "account_1", 500)
 	db.Write(initTx, "account_2", 500)
 	db.Write(initTx, "account_3", 500)
 	db.Write(initTx, "counter", 0)
 	db.Write(initTx, "balance", 1000)
-	db.Commit(initTx)
+	db.Commit(initTx, 0)
 
 	fmt.Println("Initial state: account_1=500, account_2=500, account_3=500, counter=0, balance=1000")
 

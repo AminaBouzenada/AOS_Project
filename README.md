@@ -23,4 +23,18 @@
 
    3- Run benchmarks:
        go test -bench=. -benchmem
-        
+      
+
+    or:
+
+
+    1- to run tests: go run
+
+    2- results:
+    PASS
+    ok      database-sync-unsynchronized    3.501s
+
+    3- go test -bench .
+
+
+
