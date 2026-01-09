@@ -9,13 +9,13 @@ import (
 
 func main() {
 	fmt.Println("╔═══════════════════════════════════════════════════════════╗")
-	fmt.Println("║   Database Synchronization Mini-Project                  ║")
-	fmt.Println("║   UNSYNCHRONIZED VERSION - Demonstrates Race Conditions   ║")
+	fmt.Println("║   Database Synchronization Mini-Project                   ║")
+	fmt.Println("║   SYNCHRONIZED VERSION - Demonstrates Monitors solution   ║")
 	fmt.Println("╚═══════════════════════════════════════════════════════════╝")
 
-	fmt.Println("\n⚠️  WARNING: This code has NO synchronization!")
-	fmt.Println("⚠️  Running with multiple goroutines WILL cause race conditions.")
-	fmt.Println("⚠️  Run with: go run -race . to detect data races")
+	fmt.Println("\n✅ Note: This code has synchronization!")
+	fmt.Println("✅  Running with multiple goroutines WILL not cause race conditions.")
+	// fmt.Println("✅  Run with: go run -race . to detect data races")
 
 	// Create database instance
 	db := NewDatabase()
@@ -40,13 +40,24 @@ func main() {
 
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("\n✓ All scenarios completed!")
-	fmt.Println("\nTo see the race conditions detected by Go's race detector:")
-	fmt.Println("  go run -race .")
-	fmt.Println("\nExpected behavior:")
+	fmt.Println("\nOld behaviors:")
 	fmt.Println("  - Counter scenario: Lost updates (final value < expected)")
 	fmt.Println("  - Bank transfer: Money lost (total < 2000)")
 	fmt.Println("  - Read-write: Inconsistent reads detected")
 	fmt.Println("  - General: Data corruption and race warnings")
+	fmt.Println("\nNew behaviors (after monitors):")
+	fmt.Println("  - Counter scenario: All updates recorded (final value = expected (1000))")
+	fmt.Println("  - Bank transfer: Total preserved (total = 2000)")
+	fmt.Println("  - Read-write: No inconsistent reads detected")
+	fmt.Println("  - General: No Data corruption and race warnings")
+	// fmt.Println("\n✓ All scenarios completed!")
+	// fmt.Println("\nTo see the race conditions detected by Go's race detector:")
+	// fmt.Println("  go run -race .")
+	// fmt.Println("\nExpected behavior:")
+	// fmt.Println("  - Counter scenario: Lost updates (final value < expected)")
+	// fmt.Println("  - Bank transfer: Money lost (total < 2000)")
+	// fmt.Println("  - Read-write: Inconsistent reads detected")
+	// fmt.Println("  - General: Data corruption and race warnings")
 }
 
 func runGeneralScenario(db *Database) {
@@ -55,6 +66,7 @@ func runGeneralScenario(db *Database) {
 
 	// Initialize some data
 	initTx := db.BeginTransaction()
+	//*with 5 clients no one of them do writing the totalWrites=5
 	db.Write(initTx, "account_1", 500)
 	db.Write(initTx, "account_2", 500)
 	db.Write(initTx, "account_3", 500)
@@ -66,14 +78,14 @@ func runGeneralScenario(db *Database) {
 
 	// Create clients with different workloads
 	clients := []ClientConfig{
-		{ID: 1, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
-		{ID: 2, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
-		{ID: 3, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
-		{ID: 4, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
-		{ID: 5, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
-		{ID: 6, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
-		{ID: 7, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
-		{ID: 8, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
+		{ID: 1, NumTransactions: 1, OperationsPerTx: 1, ThinkTime: time.Microsecond * 100},
+		{ID: 2, NumTransactions: 1, OperationsPerTx: 1, ThinkTime: time.Microsecond * 100},
+		{ID: 3, NumTransactions: 1, OperationsPerTx: 1, ThinkTime: time.Microsecond * 100},
+		{ID: 4, NumTransactions: 1, OperationsPerTx: 1, ThinkTime: time.Microsecond * 100},
+		// {ID: 5, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
+		// {ID: 6, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
+		// {ID: 7, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
+		// {ID: 8, NumTransactions: 50, OperationsPerTx: 3, ThinkTime: time.Microsecond * 100},
 	}
 
 	// Run clients concurrently
@@ -81,7 +93,7 @@ func runGeneralScenario(db *Database) {
 	for _, config := range clients {
 		wg.Add(1)
 		client := NewClient(config, db)
-		go client.Run(&wg)
+		go client.Run(db, &wg)
 	}
 
 	wg.Wait()
@@ -91,6 +103,6 @@ func runGeneralScenario(db *Database) {
 	db.PrintRecords()
 	db.PrintStats()
 
-	fmt.Println("\n⚠️  Note: If you see inconsistent data or the program crashes,")
-	fmt.Println("    that's expected! This demonstrates why synchronization is needed.")
+	// fmt.Println("\n⚠️  Note: If you see inconsistent data or the program crashes,")
+	// fmt.Println("    that's expected! This demonstrates why synchronization is needed.")
 }

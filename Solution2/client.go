@@ -33,11 +33,12 @@ func NewClient(config ClientConfig, db *Database) *Client {
 
 // Run executes the client's workload
 // This will be called as a goroutine, causing concurrent access to the database
-func (c *Client) Run(wg *sync.WaitGroup) {
+// ***** Add database argument to allows use db monitor
+func (c *Client) Run(db *Database, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for i := 0; i < c.config.NumTransactions; i++ {
-		c.executeTransaction(i)
+		c.executeTransaction(db, i)
 
 		// Small delay between transactions
 		if c.config.ThinkTime > 0 {
@@ -47,12 +48,13 @@ func (c *Client) Run(wg *sync.WaitGroup) {
 }
 
 // executeTransaction performs a single transaction with multiple operations
-func (c *Client) executeTransaction(txNum int) {
+// ***** Add database argument to allows use db monitor
+func (c *Client) executeTransaction(db *Database, txNum int) {
 	tx := c.db.BeginTransaction()
 
 	// Perform random operations
 	for i := 0; i < c.config.OperationsPerTx; i++ {
-		c.performRandomOperation(tx)
+		c.performRandomOperation(db, tx)
 	}
 
 	// Commit the transaction
@@ -60,12 +62,19 @@ func (c *Client) executeTransaction(txNum int) {
 }
 
 // performRandomOperation executes a random database operation
-func (c *Client) performRandomOperation(tx *Transaction) {
+// ***** Add database argument to allows use db monitor
+func (c *Client) performRandomOperation(db *Database, tx *Transaction) {
+	//*****lock the operations untill the current goroutine finish its operation.
+	db.monitor.acquireBlocLock()
+	defer db.monitor.releaseBloclock()
+
 	operation := c.rng.Intn(4) // 0: Read, 1: Write, 2: Update, 3: Delete
 
 	// Use a small set of keys to increase contention
 	keys := []string{"account_1", "account_2", "account_3", "counter", "balance"}
 	key := keys[c.rng.Intn(len(keys))]
+
+	fmt.Printf("operation %d  on key %s\n", operation, key)
 
 	switch operation {
 	case 0: // Read
@@ -73,10 +82,12 @@ func (c *Client) performRandomOperation(tx *Transaction) {
 
 	case 1: // Write
 		value := c.rng.Intn(1000)
+		fmt.Printf("delat %d\n", value)
 		c.db.Write(tx, key, value)
 
 	case 2: // Update (most likely to cause race conditions)
 		delta := c.rng.Intn(100) - 50 // Random delta between -50 and 50
+		fmt.Printf("delat %d\n", delta)
 		c.db.Update(tx, key, delta)
 
 	case 3: // Delete (occasionally)
@@ -113,10 +124,14 @@ func RunBankTransferScenario(db *Database, numClients int, transfersPerClient in
 			rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(clientID)))
 
 			for j := 0; j < transfersPerClient; j++ {
+
 				amount := rng.Intn(50) + 1 // Transfer 1-50
 
 				// Transfer from A to B
 				tx := db.BeginTransaction()
+
+				//lock the bloc of operations (read account_A, read account_B, write account_A, write account_B)
+				db.monitor.acquireBlocLock()
 
 				// Read from account A
 				balanceA, _ := db.Read(tx, "account_A")
@@ -130,6 +145,9 @@ func RunBankTransferScenario(db *Database, numClients int, transfersPerClient in
 				// Update both accounts (RACE CONDITION!)
 				db.Write(tx, "account_A", balanceA-amount)
 				db.Write(tx, "account_B", balanceB+amount)
+
+				//unlock the bloc of operations (read account_A, read account_B, write account_A, write account_B)
+				db.monitor.releaseBloclock()
 
 				db.Commit(tx)
 			}
@@ -177,8 +195,11 @@ func RunCounterScenario(db *Database, numClients int, incrementsPerClient int) {
 			defer wg.Done()
 
 			for j := 0; j < incrementsPerClient; j++ {
+
 				tx := db.BeginTransaction()
+
 				db.Update(tx, "counter", 1) // Increment by 1
+
 				db.Commit(tx)
 			}
 		}()
@@ -230,8 +251,14 @@ func RunReadWriteScenario(db *Database, numReaders int, numWriters int, duration
 					return
 				default:
 					tx := db.BeginTransaction()
+					// lock reading bloc
+					db.monitor.acquireBlocLock()
+
 					val1, _ := db.Read(tx, "data_1")
 					val2, _ := db.Read(tx, "data_2")
+
+					// unlock reading bloc
+					db.monitor.releaseBloclock()
 
 					// These should always be equal, but won't be due to race conditions
 					if val1 != val2 {
@@ -264,9 +291,15 @@ func RunReadWriteScenario(db *Database, numReaders int, numWriters int, duration
 					newValue := rng.Intn(1000)
 
 					// Write same value to both (should be atomic, but isn't!)
+					// lock writing bloc
+					db.monitor.acquireBlocLock()
+
 					db.Write(tx, "data_1", newValue)
 					time.Sleep(time.Microsecond * 50) // Increase chance of inconsistent read
 					db.Write(tx, "data_2", newValue)
+
+					//unlock writing bloc
+					db.monitor.releaseBloclock()
 
 					db.Commit(tx)
 					time.Sleep(time.Microsecond * 100)
